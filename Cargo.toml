@@ -1,0 +1,19 @@
+[package]
+name = "stm32blink"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+panic-halt = "1.0.0"
+stm32f1xx-hal = { version = "0.10.0", features = ["stm32f103", "rt"] }
+fugit = "0.3.7"
+
+[profile.release]
+codegen-units = 1
+debug = true
+lto = true
+
+[package.metadata.cargo-embed]
+chip = "STM32F103C6"
