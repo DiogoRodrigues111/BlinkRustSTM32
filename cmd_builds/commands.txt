@@ -1,0 +1,3 @@
+cargo build --release --target thumbv7m-none-eabi
+
+cargo embed --chip STM32F103C6 --release

@@ -1,7 +1,12 @@
 [target.thumbv7m-none-eabi]
 runner = 'arm-none-eabi-gdb'
+# runner = "probe-rs run --chip STM32F103C6"
+
 rustflags = [
-  "-C", "link-arg=-Tlink.x",
+#   "-C", "link-arg=-Tmemory.x"
+  "-C", "link-arg=-Tlink.x"
 ]
+# rustflags = ["-C", "link-arg=-Tmemory.x"]
+
 [build]
 target = "thumbv7m-none-eabi"

@@ -204,6 +204,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "fugit",
+ "nb 1.1.0",
  "panic-halt",
  "stm32f1xx-hal",
 ]

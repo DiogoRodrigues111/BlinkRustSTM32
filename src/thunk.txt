@@ -1,0 +1,251 @@
+// use crate::arm_impl::Blink;
+// use stm32f1xx_hal::{ gpio::PinState, pac::{Peripherals,}, prelude::*, timer };
+
+    // let cp = cortex_m::Peripherals::take().unwrap();
+    // let dp = Peripherals::take().unwrap();
+    // let mut _afio = dp.AFIO.constrain();
+    // let mut flash = dp.FLASH.constrain();
+    // let rcc = dp.RCC.constrain();
+    // let clocks = rcc.cfgr.freeze(&mut flash.acr);
+    // let mut gpiob = dp.GPIOB.split();
+    // let mut _led = gpiob.pb9.into_push_pull_output(&mut gpiob.crh);
+    // let mut delay = cp.SYST.delay(&clocks);
+
+
+
+
+
+    #![no_std]
+#![no_main]
+
+use panic_halt as _;
+use cortex_m_rt::entry;
+
+use crate::blink::BlinkState;
+
+pub mod blink;
+
+#[entry]
+fn main() -> ! {
+
+    let state = <BlinkState as blink::Blink>::init();
+
+    loop {
+        <BlinkState as blink::Blink>::run(state, 1000);
+    }
+}
+
+
+
+
+#[allow(unused)]
+    let stm32f1xx_hal::pac::Peripherals {
+        USART1,
+        GPIOA,
+        RCC,
+        FLASH,
+        AFIO,
+        ..
+    } = stm32f1xx_hal::pac::Peripherals::take().unwrap();
+
+    let cp = Peripherals::take().unwrap();
+    let dp = stm32f1xx_hal::stm32::Peripherals::take().unwrap();
+
+    // === HABILITA CLOCKS ===
+    dp.RCC.apb2enr.modify(|_, w| {
+        w.iopaen().enabled();     // GPIOA
+        w.usart1en().enabled();   // USART1
+        w.afioen().enabled()      // AFIO
+    });
+
+    // === CONFIGURA PA9 COMO ALTERNATE PUSH-PULL (USART1_TX) ===
+    dp.GPIOA.crh.modify(|_, w| {
+        w.mode9().output50();     // Alta velocidade
+        w.cnf9().alt_push_pull();      // Alternate function push-pull
+        w
+    });
+
+    // === CONFIGURA PA10 COMO ENTRADA FLUTUANTE (USART1_RX) ===
+    dp.GPIOA.crh.modify(|_, w| {
+        w.mode10().input();       // Entrada
+        w.cnf10();     // Floating input
+        w
+    });
+
+    // === CONFIGURA PA5 COMO OUTPUT (LED) ===
+    dp.GPIOA.crl.modify(|_, w| {
+        w.mode5().output2();      // Saída 2 MHz
+        w.cnf5().push_pull();     // Push-pull
+        w
+    });
+
+    // === CONFIGURA USART1: 115200 baud, 8N1 ===
+    let pclk2 = 8_000_000; // clock padrão
+    let baud = 115_200;
+    let brr = pclk2 / baud;
+
+    dp.USART1.brr.write(|w| unsafe { w.bits(brr) });
+
+    dp.USART1.cr1.write(|w| {
+        w.ue().enabled();     // USART enable
+        w.te().enabled();     // Transmissor enable
+        w.re().enabled();     // Receptor enable
+        w
+    });
+
+    // LOOP: envia byte, espera receber algo, acende LED se tiver dado
+    loop {
+        // Espera TX pronto
+        while dp.USART1.sr.read().txe().bit_is_clear() {}
+        dp.USART1.dr.write(|w| w.dr().bits(b'R' as u16));
+
+        // Espera RX pronto
+        while dp.USART1.sr.read().rxne().bit_is_clear() {}
+        let val = dp.USART1.dr.read().dr().bits() as u8;
+
+        // Acende LED se recebeu algo
+        if val != 0 {
+            dp.GPIOA.odr.modify(|_, w| w.odr5().set_bit());
+        }
+    }
+
+
+
+#![no_std]
+#![no_main]
+
+use cortex_m_rt::entry;
+use panic_halt as _;
+use stm32f1xx_hal::prelude::*;
+
+pub mod blink;
+pub mod gpio;
+pub mod spi;
+pub mod usart;
+
+#[entry]
+fn main() -> ! {
+    #[allow(unused)]
+    let stm32f1xx_hal::pac::Peripherals {
+        USART1,
+        GPIOA,
+        RCC,
+        FLASH,
+        AFIO,
+        ..
+    } = stm32f1xx_hal::pac::Peripherals::take().unwrap();
+
+    let cp = cortex_m::Peripherals::take().unwrap();
+    let dp = stm32f1xx_hal::pac::Peripherals::take().unwrap();
+
+    let mut flash = FLASH.constrain();
+    let rcc = RCC.constrain();
+    let clocks = rcc.cfgr.freeze(&mut flash.acr);
+
+    let _afio = dp.AFIO.constrain();
+    let mut gpioa = dp.GPIOA.split();
+
+    let _tx = gpioa.pa9.into_alternate_push_pull(&mut gpioa.crh);
+    let _rx = gpioa.pa10; // PA10 is already floating input
+
+    // Habilita clock para USART1
+    let mut _ac = dp.RCC.apb2enr.modify(|_, w| w.usart1en().enabled()).clone();
+
+    // Configura USART1 manualmente (8N1, 115200 baud)
+    dp.USART1
+        .brr
+        .write(|w| unsafe { w.bits(clocks.pclk2().to_Hz() / 115_200) });
+
+    dp.USART1
+        .cr1
+        .modify(|_, w| w.ue().enabled().te().enabled().re().enabled());
+
+    let mut led = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
+    let mut delay = cp.SYST.delay(&clocks);
+
+    loop {
+        // Espera TX pronto
+        while dp.USART1.sr.read().txe().bit_is_clear() {}
+        dp.USART1.dr.write(|w| w.dr().bits(b'H' as u16)); // Envia 'H'
+
+        // Espera RX pronto
+        while dp.USART1.sr.read().rxne().bit_is_set() {}
+        let received = dp.USART1.dr.read().dr().bits() as u8;
+
+        if received == b'H' {
+            led.set_high();
+            delay.delay_ms(500_u16);
+            led.set_low();
+            delay.delay_ms(500_u16);
+        }
+    }
+}
+
+
+
+
+#![no_std]
+#![no_main]
+
+use cortex_m_rt::entry;
+use panic_halt as _;
+use stm32f1xx_hal::prelude::*;
+
+#[entry]
+fn main() -> ! {
+    #[allow(unused)]
+    let stm32f1xx_hal::pac::Peripherals {
+        USART1,
+        GPIOA,
+        RCC,
+        FLASH,
+        AFIO,
+        ..
+    } = stm32f1xx_hal::pac::Peripherals::take().unwrap();
+
+    let cp = cortex_m::Peripherals::take().unwrap();
+    let dp = stm32f1xx_hal::pac::Peripherals::take().unwrap();
+
+    let mut flash = FLASH.constrain();
+    let rcc = RCC.constrain();
+    let clocks = rcc.cfgr.freeze(&mut flash.acr);
+
+    let _afio = dp.AFIO.constrain();
+    let mut gpioa = dp.GPIOA.split();
+
+    let _tx = gpioa.pa9.into_alternate_push_pull(&mut gpioa.crh);
+    let _rx = gpioa.pa10; // PA10 is already floating input
+
+    // Habilita clock para USART1
+    let _a = dp.RCC.apb2enr.modify(|_, w| w.usart1en().enabled()).clone();
+
+    // Configura USART1 manualmente (8N1, 115200 baud)
+    dp.USART1
+        .brr
+        .write(|w| unsafe { w.bits(clocks.pclk2().to_Hz() / 115_200) });
+
+    dp.USART1
+        .cr1
+        .modify(|_, w| w.ue().enabled().te().enabled().re().enabled());
+
+    let mut led = gpioa.pa5.into_push_pull_output(&mut gpioa.crl);
+    let mut delay = cp.SYST.delay(&clocks);
+
+    loop {
+        // Espera TX pronto
+        while dp.USART1.sr.read().txe().bit_is_clear() {}
+        dp.USART1.dr.write(|w| w.dr().bits(b'H' as u16)); // Envia 'H'
+        // Espera RX pronto
+        while dp.USART1.sr.read().rxne().bit_is_clear() {}
+        let received = dp.USART1.dr.read().dr().bits() as u8;
+
+        if received != 0 {
+            loop {
+                led.set_high();
+                delay.delay_ms(500_u16);
+                led.set_low();
+                delay.delay_ms(500_u16);
+            }
+        }
+    }
+}
